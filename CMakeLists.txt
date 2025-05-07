@@ -24,6 +24,7 @@ src/TinyLibrary/AdpcmDecorder.cpp
 src/TinyLibrary/Mathmatics.cpp
 src/TinyLibrary/SoundMixer.cpp
 src/TinyLibrary/SoundPlayer.cpp
+src/TinyLibrary/Report.cpp
 src/TinyLibrary/Pico/Controller.cpp
 src/TinyLibrary/Pico/Screen.cpp
 src/TinyLibrary/Pico/SoundStream.cpp
