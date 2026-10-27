@@ -1,0 +1,109 @@
+# Cross build of TinySTG for the Datafrog SF3500 (MIPS32r2, little endian).
+#
+#   make -f Makefile.sf3500 TC=<path to the toolchain's host directory>
+#
+# TC must contain bin/mips-mti-linux-gnu-{gcc,g++} and the target sysroot at
+# mipsel-buildroot-linux-gnu/sysroot. Run `make -B` after changing a header.
+TC ?=
+ifeq ($(TC),)
+$(error set TC, e.g. make -f Makefile.sf3500 TC=/path/to/host)
+endif
+SYSROOT = $(TC)/mipsel-buildroot-linux-gnu/sysroot
+CC = $(TC)/bin/mips-mti-linux-gnu-g++
+CC_C = $(TC)/bin/mips-mti-linux-gnu-gcc
+
+CPPFLAG = --sysroot=$(SYSROOT) -D SDL2 -O2 -mips32r2 -mtune=74kc -mhard-float
+LIBS = -lpthread -ldl -lm
+LIBDIR = -L$(SYSROOT)/usr/lib
+INCDIR =
+TARGET = TinySTG.mipsel
+
+SRC = ../../src
+OBJS = main.o \
+Boss1.o Boss2.o Boss3.o Boss4.o Boss5.o Boss6.o \
+Bullet.o Enemy.o Enemy1.o Enemy2.o Enemy3.o Enemy4.o Enemy5.o \
+Explode.o Game.o Global.o MainLoop.o Player.o PowerUp.o Resource.o Shot.o Sound.o \
+AdpcmDecorder.o Mathmatics.o Report.o SoundMixer.o SoundPlayer.o \
+Controller.o Screen.o SoundStream.o TinyFile.o RingBuffer.o \
+hwdisp.o hwaudio.o joykey.o hwdsp.o
+
+$(TARGET): $(OBJS)
+	$(CC) -o $@ $^ $(CPPFLAG) $(LIBDIR) $(LIBS)
+
+main.o: $(SRC)/TinyLibrary/SDL2/main.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Boss1.o: $(SRC)/Boss1.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Boss2.o: $(SRC)/Boss2.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Boss3.o: $(SRC)/Boss3.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Boss4.o: $(SRC)/Boss4.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Boss5.o: $(SRC)/Boss5.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Boss6.o: $(SRC)/Boss6.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Bullet.o: $(SRC)/Bullet.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Enemy.o: $(SRC)/Enemy.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Enemy1.o: $(SRC)/Enemy1.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Enemy2.o: $(SRC)/Enemy2.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Enemy3.o: $(SRC)/Enemy3.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Enemy4.o: $(SRC)/Enemy4.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Enemy5.o: $(SRC)/Enemy5.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Explode.o: $(SRC)/Explode.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Game.o: $(SRC)/Game.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Global.o: $(SRC)/Global.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+MainLoop.o: $(SRC)/MainLoop.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Player.o: $(SRC)/Player.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+PowerUp.o: $(SRC)/PowerUp.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Resource.o: $(SRC)/Resource.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Shot.o: $(SRC)/Shot.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Sound.o: $(SRC)/Sound.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+AdpcmDecorder.o: $(SRC)/TinyLibrary/AdpcmDecorder.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Mathmatics.o: $(SRC)/TinyLibrary/Mathmatics.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Report.o: $(SRC)/TinyLibrary/Report.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+SoundMixer.o: $(SRC)/TinyLibrary/SoundMixer.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+SoundPlayer.o: $(SRC)/TinyLibrary/SoundPlayer.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Controller.o: $(SRC)/TinyLibrary/SDL2/Controller.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+Screen.o: $(SRC)/TinyLibrary/SDL2/Screen.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+SoundStream.o: $(SRC)/TinyLibrary/SDL2/SoundStream.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+TinyFile.o: $(SRC)/TinyLibrary/SDL2/TinyFile.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+RingBuffer.o: $(SRC)/TinyLibrary/SDL2/RingBuffer.cpp
+	$(CC) -c $(CPPFLAG) $(INCDIR) $<
+hwdisp.o: $(SRC)/TinyLibrary/SDL2/hwdisp.c
+	$(CC_C) -c $(CPPFLAG) $(INCDIR) $<
+hwaudio.o: $(SRC)/TinyLibrary/SDL2/hwaudio.c
+	$(CC_C) -c $(CPPFLAG) $(INCDIR) $<
+joykey.o: $(SRC)/TinyLibrary/SDL2/joykey.c
+	$(CC_C) -c $(CPPFLAG) $(INCDIR) $<
+hwdsp.o: $(SRC)/TinyLibrary/SDL2/hwdsp.c
+	$(CC_C) -c $(CPPFLAG) $(INCDIR) $<
+
+clean:
+	-rm -f $(OBJS) $(TARGET) *.d

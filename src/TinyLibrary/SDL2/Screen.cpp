@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <math.h>
 #if defined(_WIN64)
 #pragma comment(lib, "../../lib/sdl2/sdl2/lib/x64/SDL2.lib")
 #pragma comment(lib, "../../lib/sdl2/sdl2/lib/x64/SDL2main.lib")
@@ -15,6 +17,7 @@
 #endif
 #include "../Mathmatics.hpp"
 #include "Screen.hpp"
+#include "hwdisp.h"
 
 #if defined(USE_COLOR256)
 #include "../Font6x8.h"
@@ -52,20 +55,7 @@ const unsigned int Screen::color_table[256] =
 Screen::Screen(int color_mode)
 :color_mode(color_mode)
 {
-	// SDL‰Šú‰»
-	if(SDL_Init(SDL_INIT_VIDEO) != 0)
-	{
-		throw "Error: SDL_Init(SDL_INIT_VIDEO)";
-	}
-	atexit(SDL_Quit);
-	// RGB30‘Î‰ž(‚à‚µ‰æ–Ê‚ª³•ûŒ`‚¾‚Á‚½ê‡‚Í³•ûŒ`‚É‘Î‰ž‚·‚é)
-	SDL_DisplayMode displayMode;
-	SDL_GetDesktopDisplayMode(0, &displayMode);
-	if(displayMode.w == displayMode.h)
-	{
-		Screen::HEIGHT = Screen::WIDTH;
-	}
-	// screen_buffer‰Šú‰»
+	// screen_bufferï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	this->buffer_size = Screen::WIDTH * Screen::HEIGHT;
 	if (color_mode == 16)
 	{
@@ -73,24 +63,27 @@ Screen::Screen(int color_mode)
 	}
 	this->screen_buffer = new unsigned char[this->buffer_size];
 	memset(this->screen_buffer, 0, this->buffer_size);
-	this->window = SDL_CreateWindow("Hello World!", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, SDL_WINDOW_SHOWN);
-	if(this->window == NULL)
+	// Upscaled frame handed to the driver; size and fit come from video.txt.
+	this->hw_frame_buffer = NULL;
+	this->hw_col_map = NULL;
+	this->hw_row_map = NULL;
+	this->hw_src_row = NULL;
+	this->hw_col_edge = NULL;
+	this->hw_row_edge = NULL;
+	this->hw_frames = 0;
+	this->hw_compose_ns = 0;
+	this->hw_present_ns = 0;
+	this->hw_present_max_ns = 0;
+	this->LoadVideoConfig();
+	if(hwdisp_init() != 0)
 	{
-		throw "Error: SDL_CreateWindow";
+		throw "Error: hwdisp_init";
 	}
-	this->renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-	if(this->renderer == NULL)
-	{
-		throw "Error: SDL_CreateRenderer";
-	}
-	SDL_RenderSetLogicalSize(renderer, Screen::WIDTH, Screen::HEIGHT);
-	SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-	this->screenSurface = SDL_CreateRGBSurface(0, Screen::WIDTH, Screen::HEIGHT, 32, 0, 0, 0, 0);
-	if(this->screenSurface == NULL)
-	{
-		throw "Error: SDL_CreateRenderer";
-	}
-	memset(this->screenSurface->pixels, 0, static_cast<size_t>(Screen::WIDTH) * Screen::HEIGHT * sizeof(unsigned int));
+	// The driver's own fixed internal canvas is 640x480 (4:3). A frame that is
+	// not 4:3 (for example a video.txt with 320x256) would be stretched to it,
+	// so hwdisp pads narrower frames to 4:3 first. This is a no-op for the
+	// default 320x240 frame.
+	hwdisp_set_target_aspect(4, 3);
 }
 
 Screen::~Screen(void)
@@ -100,8 +93,22 @@ Screen::~Screen(void)
 		delete [] this->screen_buffer;
 		this->screen_buffer = NULL;
 	}
-	SDL_DestroyRenderer(this->renderer);
-	SDL_DestroyWindow(this->window);
+	if(this->hw_frame_buffer != NULL)
+	{
+		delete [] this->hw_frame_buffer;
+		this->hw_frame_buffer = NULL;
+	}
+	delete [] this->hw_col_map;
+	delete [] this->hw_row_map;
+	delete [] this->hw_src_row;
+	delete [] this->hw_col_edge;
+	delete [] this->hw_row_edge;
+	this->hw_col_edge = NULL;
+	this->hw_row_edge = NULL;
+	this->hw_col_map = NULL;
+	this->hw_row_map = NULL;
+	this->hw_src_row = NULL;
+	hwdisp_deinit();
 }
 
 void Screen::Initialize(int color_mode)
@@ -144,44 +151,204 @@ void Screen::DrawBegin(void)
 {
 }
 
+static long long screen_now_ns(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return static_cast<long long>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+}
+
+// video.txt (in the port folder), one "key=value" per line:
+//   out_w, out_h   size of the frame given to the driver (default 320x240)
+//   fit            stretch: fill the whole frame, pixels may be uneven by a
+//                           fraction of a pixel (default)
+//                  integer: largest whole-number scale, centred, black borders
+// Examples: 320x240 stretch (default, cheap), 640x480 integer (7x, crisp).
+void Screen::LoadVideoConfig(void)
+{
+	int out_w = 320;
+	int out_h = 240;
+	bool integer_fit = false;
+	float contrast = 1.15f;
+	float saturation = 1.25f;
+	float gamma = 1.0f;
+	int scanlines = 0;
+	int grid = 0;
+	FILE* f = fopen("video.txt", "r");
+	if(f != NULL)
+	{
+		char line[128];
+		while(fgets(line, sizeof(line), f) != NULL)
+		{
+			int v = 0;
+			float fv = 0.0f;
+			char word[32];
+			if(sscanf(line, "out_w=%d", &v) == 1) { out_w = v; }
+			else if(sscanf(line, "out_h=%d", &v) == 1) { out_h = v; }
+			else if(sscanf(line, "contrast=%f", &fv) == 1) { contrast = fv; }
+			else if(sscanf(line, "saturation=%f", &fv) == 1) { saturation = fv; }
+			else if(sscanf(line, "gamma=%f", &fv) == 1) { gamma = fv; }
+			else if(sscanf(line, "scanlines=%d", &v) == 1) { scanlines = v; }
+			else if(sscanf(line, "grid=%d", &v) == 1) { grid = v; }
+			else if(sscanf(line, "fit=%31s", word) == 1) { integer_fit = (strcmp(word, "integer") == 0); }
+		}
+		fclose(f);
+	}
+	if(out_w < Screen::WIDTH || out_w > 1280) { out_w = 320; }
+	if(out_h < Screen::HEIGHT || out_h > 720) { out_h = 240; }
+	this->hw_out_w = out_w;
+	this->hw_out_h = out_h;
+	this->hw_frame_buffer = new unsigned short[static_cast<size_t>(out_w) * out_h];
+	memset(this->hw_frame_buffer, 0, static_cast<size_t>(out_w) * out_h * sizeof(unsigned short));
+	this->hw_col_map = new int[out_w];
+	this->hw_row_map = new int[out_h];
+	this->hw_src_row = new unsigned short[Screen::WIDTH];
+	this->hw_col_edge = new unsigned char[out_w];
+	this->hw_row_edge = new unsigned char[out_h];
+	int scale = 1;
+	int off_x = 0;
+	int off_y = 0;
+	int used_w = out_w;
+	int used_h = out_h;
+	if(integer_fit)
+	{
+		int sx = out_w / Screen::WIDTH;
+		int sy = out_h / Screen::HEIGHT;
+		scale = (sx < sy) ? sx : sy;
+		if(scale < 1) { scale = 1; }
+		used_w = Screen::WIDTH * scale;
+		used_h = Screen::HEIGHT * scale;
+		off_x = (out_w - used_w) / 2;
+		off_y = (out_h - used_h) / 2;
+	}
+	for(int x = 0; x < out_w; ++ x)
+	{
+		int ux = x - off_x;
+		this->hw_col_map[x] = (ux < 0 || ux >= used_w) ? -1 : ux * Screen::WIDTH / used_w;
+	}
+	for(int y = 0; y < out_h; ++ y)
+	{
+		int uy = y - off_y;
+		this->hw_row_map[y] = (uy < 0 || uy >= used_h) ? -1 : uy * Screen::HEIGHT / used_h;
+	}
+	if(scanlines < 0 || scanlines > 80) { scanlines = 0; }
+	if(grid < 0 || grid > 80) { grid = 0; }
+	// Last output column/row of each game pixel: darkened for the grid / scanline effects.
+	for(int x = 0; x < out_w; ++ x)
+	{
+		const bool edge = (this->hw_col_map[x] >= 0) && (x + 1 >= out_w || this->hw_col_map[x + 1] != this->hw_col_map[x]);
+		this->hw_col_edge[x] = (grid > 0 && edge) ? 1 : 0;
+	}
+	for(int y = 0; y < out_h; ++ y)
+	{
+		const bool edge = (this->hw_row_map[y] >= 0) && (y + 1 >= out_h || this->hw_row_map[y + 1] != this->hw_row_map[y]);
+		this->hw_row_edge[y] = (scanlines > 0 && edge) ? 1 : 0;
+	}
+	const float row_factor = 1.0f - scanlines / 100.0f;
+	const float col_factor = 1.0f - grid / 100.0f;
+	if(contrast < 0.5f || contrast > 2.0f) { contrast = 1.0f; }
+	if(saturation < 0.0f || saturation > 3.0f) { saturation = 1.0f; }
+	if(gamma < 0.4f || gamma > 2.5f) { gamma = 1.0f; }
+	// Palette tweak, built once: the game's 256-colour palette is dull on this
+	// panel, so push saturation and contrast (and optionally gamma) per entry.
+	for(int i = 0; i < 256; ++ i)
+	{
+		unsigned int color32 = Screen::color_table[i];
+		float c[3];
+		c[0] = ((color32 >> 16) & 0xFF) / 255.0f;
+		c[1] = ((color32 >> 8) & 0xFF) / 255.0f;
+		c[2] = (color32 & 0xFF) / 255.0f;
+		const float luma = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2];
+		float fin[3];
+		for(int k = 0; k < 3; ++ k)
+		{
+			float v = luma + (c[k] - luma) * saturation;
+			v = (v - 0.5f) * contrast + 0.5f;
+			if(v < 0.0f) { v = 0.0f; }
+			if(v > 1.0f) { v = 1.0f; }
+			if(gamma != 1.0f) { v = powf(v, 1.0f / gamma); }
+			fin[k] = v;
+		}
+		for(int vv = 0; vv < 4; ++ vv)
+		{
+			float fac = 1.0f;
+			if(vv & 2) { fac *= row_factor; }
+			if(vv & 1) { fac *= col_factor; }
+			const unsigned int r8 = static_cast<unsigned int>(fin[0] * fac * 255.0f + 0.5f);
+			const unsigned int g8 = static_cast<unsigned int>(fin[1] * fac * 255.0f + 0.5f);
+			const unsigned int b8 = static_cast<unsigned int>(fin[2] * fac * 255.0f + 0.5f);
+			this->hw_lut4[vv][i] = static_cast<unsigned short>(((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));
+		}
+		this->hw_lut[i] = this->hw_lut4[0][i];
+	}
+	fprintf(stderr, "tinystg video: game %dx%d -> frame %dx%d, fit=%s, contrast %.2f, saturation %.2f, gamma %.2f, scanlines %d%%, grid %d%%\n", Screen::WIDTH, Screen::HEIGHT, out_w, out_h,
+		integer_fit ? "integer" : "stretch", contrast, saturation, gamma, scanlines, grid);
+}
+
 void Screen::DrawEnd(void)
 {
-	unsigned int* frameBuffer = reinterpret_cast<unsigned int*>(this->screenSurface->pixels);
-	if(this->color_mode == 8)
+	const long long t0 = screen_now_ns();
+	const int ow = this->hw_out_w;
+	const int oh = this->hw_out_h;
+	int prev_sy = -1;
+	int prev_re = -1;
+	for(int y = 0; y < oh; ++ y)
 	{
-		for(int y = 0; y < Screen::HEIGHT; ++ y)
+		const int sy = this->hw_row_map[y];
+		if(sy < 0)
 		{
+			prev_sy = -1;
+			continue;
+		}
+		const int re = this->hw_row_edge[y];
+		unsigned short* dst = &this->hw_frame_buffer[static_cast<size_t>(y) * ow];
+		if(sy == prev_sy && re == prev_re)
+		{
+			memcpy(dst, dst - ow, static_cast<size_t>(ow) * sizeof(unsigned short));
+			continue;
+		}
+		prev_sy = sy;
+		prev_re = re;
+		if(this->color_mode == 8)
+		{
+			const unsigned char* src = &this->screen_buffer[sy * Screen::WIDTH];
+			const unsigned short* lut_n = this->hw_lut4[re * 2];
+			const unsigned short* lut_e = this->hw_lut4[re * 2 + 1];
+			for(int x = 0; x < ow; ++ x)
+			{
+				const int m = this->hw_col_map[x];
+				dst[x] = (m < 0) ? 0 : (this->hw_col_edge[x] ? lut_e[src[m]] : lut_n[src[m]]);
+			}
+		}
+		else
+		{
+			const unsigned short* src16 = reinterpret_cast<unsigned short*>(this->screen_buffer) + sy * Screen::WIDTH;
 			for(int x = 0; x < Screen::WIDTH; ++ x)
 			{
-				unsigned char color_index = screen_buffer[y * Screen::WIDTH + x];
-				unsigned int color = Screen::color_table[color_index];
-				frameBuffer[y * Screen::WIDTH + x] = color;
+				this->hw_src_row[x] = Color16To565(src16[x]);
+			}
+			for(int x = 0; x < ow; ++ x)
+			{
+				const int m = this->hw_col_map[x];
+				dst[x] = (m < 0) ? 0 : this->hw_src_row[m];
 			}
 		}
 	}
-	else
+	const long long t1 = screen_now_ns();
+	hwdisp_present(this->hw_frame_buffer, ow, oh, ow * 2);
+	const long long t2 = screen_now_ns();
+	this->hw_compose_ns += t1 - t0;
+	this->hw_present_ns += t2 - t1;
+	if(t2 - t1 > this->hw_present_max_ns) { this->hw_present_max_ns = t2 - t1; }
+	if(++ this->hw_frames >= 120)
 	{
-		unsigned short* screen_buffer16 = reinterpret_cast<unsigned short*>(this->screen_buffer);
-		for(int y = 0; y < HEIGHT; ++ y)
-		{
-			for(int x = 0; x < Screen::WIDTH; ++ x)
-			{
-				unsigned short color = screen_buffer16[y * Screen::WIDTH + x];
-				frameBuffer[y * Screen::WIDTH + x] = Color16To32(color);
-			}
-		}
+		fprintf(stderr, "tinystg video: 120 frames, compose avg %.2f ms, present avg %.2f ms (max %.2f ms)\n",
+			this->hw_compose_ns / 120.0 / 1e6, this->hw_present_ns / 120.0 / 1e6, this->hw_present_max_ns / 1e6);
+		this->hw_frames = 0;
+		this->hw_compose_ns = 0;
+		this->hw_present_ns = 0;
+		this->hw_present_max_ns = 0;
 	}
-	SDL_Texture* screenTexture = SDL_CreateTextureFromSurface(this->renderer, this->screenSurface);
-	SDL_Rect sourceRect = {
-		0, 0, Screen::WIDTH, Screen::HEIGHT
-	};
-	SDL_Rect destRect =
-	{
-		0, 0, Screen::WIDTH, Screen::HEIGHT
-	};
-	SDL_RenderCopy(this->renderer, screenTexture, &sourceRect, &destRect);
-	SDL_DestroyTexture(screenTexture);
-	SDL_RenderPresent(this->renderer);
 }
 
 void Screen::DrawSprite(const void* buffer, int x, int y, int width, int height, int color_key)
@@ -675,18 +842,17 @@ void Screen::DrawSpriteNoClip(const void* buffer, int x, int y, int width, int h
 	}
 }
 
-// color16 GGGR RRRR BBBB BGGG
-// color32 AAAA AAAA BBBB BBBB GGGG GGGG RRRR RRRR
-unsigned int Screen::Color16To32(unsigned short color16)
+// color16 (source, custom packing) GGGR RRRR BBBB BGGG -> standard RGB565.
+// Field named "red" in the original Color16To32 is physically blue (and vice
+// versa) in this source format - preserved here, only the output packing
+// changes (32bpp ARGB -> 16bpp RGB565, since hwdisp wants RGB565 directly).
+unsigned short Screen::Color16To565(unsigned short color16)
 {
-	unsigned int color32 = 0;
 	unsigned short color = (color16 >> 8) | ((color16 & 0xFF00) << 8);
-	unsigned int red = (color & 0x1F) * 8;
-	unsigned int green = ((color >> 5) & 0x3F) * 4;
-	unsigned int blue = ((color >> 11) & 0x1F) * 8;
-	unsigned int alpha = 0xFF;
-	color32 = (alpha << 24) + (blue << 16) + (green << 8) + red;
-	return color32;
+	unsigned int phys_blue = color & 0x1F;
+	unsigned int green6 = (color >> 5) & 0x3F;
+	unsigned int phys_red = (color >> 11) & 0x1F;
+	return static_cast<unsigned short>((phys_red << 11) | (green6 << 5) | phys_blue);
 }
 
 #endif

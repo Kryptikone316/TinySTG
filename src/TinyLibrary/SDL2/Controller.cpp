@@ -2,32 +2,19 @@
 
 #include <stdio.h>
 #include "Controller.hpp"
+#include "joykey.h"
 
 Controller* Controller::controller = NULL;
 
 Controller::Controller(void)
 :button(0)
 ,touch(false)
-,gameController(NULL)
 {
-	if(SDL_InitSubSystem(SDL_INIT_JOYSTICK) != 0)
-	{
-		throw "Error: SDL_Init(SDL_INIT_JOYSTICK)";
-	}
-	int numJoysticks = SDL_NumJoysticks();
-	if((numJoysticks > 0) && SDL_IsGameController(0))
-	{
-		this->gameController = SDL_GameControllerOpen(0);
-	}
+	joykey_init();
 }
 
 Controller::~Controller(void)
 {
-	if(this->gameController != NULL)
-	{
-		SDL_GameControllerClose(this->gameController);
-		this->gameController = NULL;
-	}
 }
 
 void Controller::Initialize(void)
@@ -56,85 +43,23 @@ void Controller::Reset(void)
 
 void Controller::Update(void)
 {
-	this->button = 0;
-	// コントローラー
-	if(this->gameController != NULL)
+	unsigned int raw = joykey_read();
+	unsigned int newButton = 0;
+	if(raw & (1u << JK_UP))    newButton |= BUTTON_UP;
+	if(raw & (1u << JK_DOWN))  newButton |= BUTTON_DOWN;
+	if(raw & (1u << JK_LEFT))  newButton |= BUTTON_LEFT;
+	if(raw & (1u << JK_RIGHT)) newButton |= BUTTON_RIGHT;
+	if(raw & (1u << JK_A))     newButton |= BUTTON_1;
+	if(raw & (1u << JK_B))     newButton |= BUTTON_2;
+	if(raw & (1u << JK_L1))    newButton |= BUTTON_L;
+	if(raw & (1u << JK_R1))    newButton |= BUTTON_R;
+	if(raw & (1u << JK_START)) newButton |= BUTTON_START;
+	if(raw & (1u << JK_SELECT)) newButton |= BUTTON_SELECT;
+	if((newButton & (BUTTON_START | BUTTON_SELECT)) == (BUTTON_START | BUTTON_SELECT))
 	{
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_A) == 1)
-		{
-			this->button |= BUTTON_1;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_B) == 1)
-		{
-			this->button |= BUTTON_2;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_START) == 1)
-		{
-			this->button |= BUTTON_START;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_BACK) == 1)
-		{
-			this->button |= BUTTON_SELECT;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_LEFTSHOULDER) == 1)
-		{
-			this->button |= BUTTON_START;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) == 1)
-		{
-			this->button |= BUTTON_SELECT;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_DPAD_UP) == 1)
-		{
-			this->button |= BUTTON_UP;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_DPAD_DOWN) == 1)
-		{
-			this->button |= BUTTON_DOWN;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_DPAD_LEFT) == 1)
-		{
-			this->button |= BUTTON_LEFT;
-		}
-		if(SDL_GameControllerGetButton(this->gameController, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) == 1)
-		{
-			this->button |= BUTTON_RIGHT;
-		}
+		newButton |= BUTTON_QUIT;
 	}
-	// キーボード
-	const Uint8* state = SDL_GetKeyboardState(NULL);
-	if(state != NULL)
-	{
-		if(state[SDL_SCANCODE_Z] == 1)
-		{
-			this->button |= BUTTON_1;
-		}
-		if(state[SDL_SCANCODE_X] == 1)
-		{
-			this->button |= BUTTON_2;
-		}
-		if(state[SDL_SCANCODE_ESCAPE] == 1)
-		{
-			this->button |= BUTTON_START;
-			this->button |= BUTTON_SELECT;
-		}
-		if(state[SDL_SCANCODE_UP] == 1)
-		{
-			this->button |= BUTTON_UP;
-		}
-		if(state[SDL_SCANCODE_DOWN] == 1)
-		{
-			this->button |= BUTTON_DOWN;
-		}
-		if(state[SDL_SCANCODE_LEFT] == 1)
-		{
-			this->button |= BUTTON_LEFT;
-		}
-		if(state[SDL_SCANCODE_RIGHT] == 1)
-		{
-			this->button |= BUTTON_RIGHT;
-		}
-	}
+	this->button = newButton;
 }
 
 unsigned int Controller::GetButton(void)

@@ -1,8 +1,6 @@
 #ifndef CONTROLLER_HPP
 #define CONTROLLER_HPP
 
-#include <SDL.h>
-
 class Controller
 {
 public:
@@ -35,7 +33,6 @@ public:
 private:
 	unsigned int button;
 	bool touch;
-	SDL_GameController* gameController;
 };
 
 #endif

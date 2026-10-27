@@ -1,15 +1,11 @@
 #ifndef TINYSOUNDSTREAM_HPP
 #define TINYSOUNDSTREAM_HPP
 
-#include <SDL.h>
-#include "RingBuffer.hpp"
-
 class SoundStream
 {
 public:
 	enum
 	{
-		SOUND_BUFFER_SIZE = 800 * 2,
 		MAX_VOLUME = 8
 	};
 	SoundStream(int frequency);
@@ -23,12 +19,15 @@ public:
 	bool Write(const unsigned char* buffer);
 	void SetVolume(int volume);
 	int GetVolume(void);
-	static void Callback(void*, Uint8* stream, int len);
 private:
-	SDL_AudioDeviceID audioDeviceID;
-	RingBuffer ringBuffer;
+	int frequency;
 	int writableSize;
 	int volume;
+	long long start_time_ns;
+	unsigned long long frames_produced;
+	unsigned long long out_frames_produced;
+	int prev_sample;
+	int hold_count;
 	SoundStream(SoundStream&);
 	SoundStream& operator = (SoundStream&);
 };
